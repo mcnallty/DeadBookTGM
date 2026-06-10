@@ -4,6 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>The Book of the Dead — A Listening Atlas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff5fd0'/%3E%3Cstop offset='1' stop-color='%23ffd23a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='34' height='34' rx='8' fill='%230d0a18'/%3E%3Ccircle cx='17' cy='17' r='13.5' fill='none' stroke='url(%23b)' stroke-width='2.2'/%3E%3Cpath d='M19.5 5 L11.5 18.5 L16 18.5 L13.8 29 L23 14.5 L17.8 14.5 Z' fill='url(%23b)'/%3E%3C/svg%3E"/>
 <style>
 :root{
   --bg:#070410; --bg2:#0d0820; --panel:#150d2a; --panel2:#1c1136; --line:#2b1c4d; --line2:#3a2766;
@@ -787,7 +788,8 @@ const Library = {
             <span class="chip">${vs.length} version${vs.length > 1 ? "s" : ""}</span>
             ${med ? `<span class="chip" data-tip="median jam length among your starred versions">~${fmtSec(med)}</span>` : ""}
             <span class="meta">${evo.length ? `${evo.length} dated performances in corpus` : ""}
-              ${sparkline(evo)}
+              ${evo.length >= 2 ? `<span style="cursor:pointer" data-tip="∿ open the full evolution chart"
+                onclick="event.stopPropagation();go('evolution','${esc(song).replace(/'/g, "\\'")}')">${sparkline(evo)}</span>` : ""}
               <button class="playbtn sm ghost" data-tip="play all versions, oldest first" onclick="event.stopPropagation();Library.playAll('${esc(song).replace(/'/g, "\\'")}')">▶ all</button></span>
           </div>
           ${open ? this.sortFn(vs).map(e => rowHtml(e)).join("") : ""}`;
@@ -1643,6 +1645,7 @@ Render.insights = function () {
       <div class="vizbox" style="grid-column:1/-1"><h4>Your taste vs. the crowd</h4>
         <div class="vd">Every starred version by community downloads (→) and rating (↑). The far-left gems are <b>yours alone</b> — the crowd hasn't found them. Click any dot.</div>
         <div id="ins-scatter"></div></div>
+      <div class="vizbox" id="ins-detail" style="grid-column:1/-1;display:none"></div>
       <div class="vizbox"><h4>The breathing of the jam</h4>
         <div class="vd">Median track length per year across all ${Object.values(ATLAS.song_evolution).reduce((n, v) => n + v.length, 0)} mined performances — watch '72–'74 stretch and the '80s tighten.</div>
         <div id="ins-jamline"></div></div>
@@ -1702,14 +1705,39 @@ function hookDots(box) {
     c.addEventListener("click", () => Drawer.openEntry(e.id));
   });
 }
+/* shared insights detail panel — any chart click fills it with playable rows */
+function insDetail(title, html) {
+  const box = document.getElementById("ins-detail");
+  if (!box) return;
+  box.style.display = "";
+  box.innerHTML = `<h4 style="display:flex;align-items:center">${title}
+    <span style="margin-left:auto;cursor:pointer;color:var(--faint);font-size:14px"
+      onclick="document.getElementById('ins-detail').style.display='none'">✕</span></h4>` + html;
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function occRowHtml(o, i) { // a mined performance row: click plays that night at that track
+  return `<div style="display:flex;gap:9px;align-items:center;padding:5px 0;border-bottom:1px solid rgba(43,28,77,.4);cursor:pointer"
+    onclick="Player.play('${o.entry}',{trackIdx:${o.track_idx != null ? o.track_idx : "null"}})">
+    <span style="color:var(--faint);width:18px;font-weight:800">${i + 1}</span>
+    <span style="flex:1;font-size:12.5px"><b>${esc((o.k || "").replace(/^~/, ""))}</b> · ${fmtDate(o.date)} <span style="color:var(--faint)">${esc(o.city || "")}</span></span>
+    ${o.sec ? `<span class="chip" style="color:var(--gold);border-color:rgba(255,210,58,.4)">${fmtSec(o.sec)}</span>` : ""}
+    <button class="playbtn sm ghost">▶</button></div>`;
+}
+let INS_BY_YEAR = {};
+function insYear(y) {
+  const occs = (INS_BY_YEAR[y] || []).slice().sort((a, b) => (b.sec || 0) - (a.sec || 0)).slice(0, 15);
+  insDetail(`${y} — the ${occs.length} deepest performances that year <span style="color:var(--faint);font-weight:400;font-size:11.5px">· click to play</span>`,
+    occs.map(occRowHtml).join(""));
+}
 function insJamline() {
   const box = document.getElementById("ins-jamline");
   const byYear = {};
-  Object.values(ATLAS.song_evolution).forEach(occs => occs.forEach(o => {
-    if (o.sec && o.year && o.year < 2000) (byYear[o.year] = byYear[o.year] || []).push(o.sec);
+  Object.entries(ATLAS.song_evolution).forEach(([k, occs]) => occs.forEach(o => {
+    if (o.sec && o.year && o.year < 2000) (byYear[o.year] = byYear[o.year] || []).push({ ...o, k });
   }));
+  INS_BY_YEAR = byYear;
   const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
-  const med = a => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
+  const med = a => { const s = a.map(o => o.sec).sort((x, y) => x - y); return s[s.length >> 1]; };
   const W = Math.max(box.clientWidth || 500, 380), H = 230, P = { l: 40, r: 10, t: 12, b: 26 };
   const maxM = Math.max(...years.map(y => med(byYear[y])));
   const X = y => P.l + ((y - years[0]) / (years[years.length - 1] - years[0])) * (W - P.l - P.r);
@@ -1722,8 +1750,9 @@ function insJamline() {
   const pts = years.map(y => `${X(y).toFixed(1)},${Y(med(byYear[y])).toFixed(1)}`);
   svg += `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--gold)" stroke-width="2.2" stroke-linejoin="round"/>`;
   years.forEach(y => {
-    svg += `<circle cx="${X(y)}" cy="${Y(med(byYear[y]))}" r="3" fill="var(--gold)"
-      data-tip="<b>${y}</b>: median ${fmtSec(med(byYear[y]))} across ${byYear[y].length} performances"/>`;
+    svg += `<circle cx="${X(y)}" cy="${Y(med(byYear[y]))}" r="3" fill="var(--gold)"/>
+      <circle cx="${X(y)}" cy="${Y(med(byYear[y]))}" r="9" fill="transparent" style="cursor:pointer" onclick="insYear(${y})"
+        data-tip="<b>${y}</b>: median ${fmtSec(med(byYear[y]))} across ${byYear[y].length} performances<br/><span style='color:var(--gold)'>click for that year's deepest jams</span>"/>`;
     if (y % 4 === 0) svg += `<text x="${X(y)}" y="${H - 8}" class="axis" text-anchor="middle">'${String(y).slice(2)}</text>`;
   });
   [5, 10].forEach(m => { if (m * 60 < maxM) svg += `<text x="${P.l - 5}" y="${Y(m * 60) + 3}" class="axis" text-anchor="end">${m}m</text>`; });
@@ -1740,8 +1769,9 @@ function insTiers() {
     return `<div style="display:flex;gap:8px;align-items:center;margin:7px 0">
       <span style="width:118px;font-size:11.5px;color:var(--dim)"><span class="eradot" style="background:${er.color}"></span> ${er.label}</span>
       <div style="flex:1;display:flex;height:16px;border-radius:8px;overflow:hidden">
-        ${segs.map(s => `<div style="width:${(s.n / total * 100).toFixed(1)}%;background:${TIER[s.t].hex};opacity:.8"
-          data-tip="${TIER[s.t].name}: ${s.n} of ${total}"></div>`).join("")}</div>
+        ${segs.map(s => `<div style="width:${(s.n / total * 100).toFixed(1)}%;background:${TIER[s.t].hex};opacity:.8;cursor:pointer"
+          data-tip="${TIER[s.t].name}: ${s.n} of ${total}<br/><span style='color:var(--gold)'>click to browse them</span>"
+          onclick="Library.lens='all';Library.era='${er.key}';Library.tier=${s.t};Library.q='';Library.localOnly=false;go('library')"></div>`).join("")}</div>
       <span style="width:30px;font-size:11px;color:var(--faint)">${total}</span></div>`;
   }).join("");
 }
@@ -1754,14 +1784,26 @@ function insTapers() {
   });
   const top = Object.entries(byT).sort((a, b) => b[1].length - a[1].length).slice(0, 9);
   const max = top[0][1].length;
-  box.innerHTML = top.map(([t, es]) => {
+  box.innerHTML = top.map(([t, es], ti) => {
     const avg = es.filter(e => e.avg_rating).reduce((s, e) => s + e.avg_rating, 0) / (es.filter(e => e.avg_rating).length || 1);
-    return `<div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+    return `<div class="taperrow" data-taper="${ti}" style="display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer"
+      data-tip="${es.length} entries · avg ★${avg.toFixed(2)}<br/><span style='color:var(--gold)'>click for their tapes</span>">
       <span style="width:118px;font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>
-      <div style="flex:1;height:14px;border-radius:7px;background:linear-gradient(90deg,var(--hot),var(--gold));width:${(es.length / max * 100).toFixed(0)}%;max-width:${(es.length / max * 100).toFixed(0)}%"
-        data-tip="${es.length} entries · avg ★${avg.toFixed(2)}"></div>
+      <div style="flex:1;height:14px;border-radius:7px;background:linear-gradient(90deg,var(--hot),var(--gold));width:${(es.length / max * 100).toFixed(0)}%;max-width:${(es.length / max * 100).toFixed(0)}%"></div>
       <span style="font-size:11px;color:var(--faint);width:64px">${es.length} · ★${avg.toFixed(2)}</span></div>`;
   }).join("");
+  box.querySelectorAll(".taperrow").forEach(row => row.addEventListener("click", () => {
+    const [name, es] = top[+row.dataset.taper];
+    insDetail(`${esc(name)} — ${es.length} tapes in the book`,
+      es.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")).map(e => rowHtml(e, { showSong: true })).join(""));
+  }));
+}
+function insMonth(ym) {
+  const [y, m] = ym.split("-");
+  const es = ATLAS.entries.filter(e => e.date && e.date.startsWith(ym))
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  insDetail(`${MONTHS[+m - 1]} ${y} — ${es.length} entr${es.length > 1 ? "ies" : "y"} in the book`,
+    es.map(e => rowHtml(e, { showSong: true })).join(""));
 }
 function insHeat() {
   const box = document.getElementById("ins-heat");
@@ -1776,10 +1818,11 @@ function insHeat() {
   years.forEach((y, xi) => {
     if (y % 4 === 0) svg += `<text x="${40 + xi * cell + cell / 2}" y="${12 * cell + 16}" class="axis" text-anchor="middle">'${String(y).slice(2)}</text>`;
     for (let m = 1; m <= 12; m++) {
-      const n = counts[y + "-" + String(m).padStart(2, "0")] || 0;
+      const ym = y + "-" + String(m).padStart(2, "0");
+      const n = counts[ym] || 0;
       svg += `<rect x="${40 + xi * cell}" y="${(m - 1) * cell}" width="${cell - 1.5}" height="${cell - 1.5}" rx="2.5"
         fill="${n ? "var(--hot)" : "rgba(255,255,255,.04)"}" opacity="${n ? 0.25 + (n / max) * 0.75 : 1}"
-        ${n ? `data-tip="<b>${MONTHS[m - 1]} ${y}</b>: ${n} entr${n > 1 ? "ies" : "y"}"` : ""}/>`;
+        ${n ? `style="cursor:pointer" onclick="insMonth('${ym}')" data-tip="<b>${MONTHS[m - 1]} ${y}</b>: ${n} entr${n > 1 ? "ies" : "y"}<br/><span style='color:var(--gold)'>click to see them</span>"` : ""}/>`;
     }
   });
   MONTHS.forEach((m, i) => { if (i % 2 === 0) svg += `<text x="34" y="${i * cell + 10}" class="axis" text-anchor="end">${m}</text>`; });
